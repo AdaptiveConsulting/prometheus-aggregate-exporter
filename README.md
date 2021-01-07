@@ -17,9 +17,6 @@ the aggregate view. This can be modified
   -server.bind (SERVER_BIND) string
     	Bind the HTTP server to this address e.g. 127.0.0.1:8080 or just :8080 (default ":8080"). For unix socket use unix:/path/to/file.sock
     	
-  -target.scrape.timeout (TARGET_SCRAPE_TIMEOUT) int
-    	If a target metrics pages does not responde with this many miliseconds then timeout (default 1000)
-    	
   -targets (TARGETS) string
     	comma separated list of targets e.g. http://localhost:8081/metrics,http://localhost:8082/metrics or url1=http://localhost:8081/metrics,url2=http://localhost:8082/metrics for custom label values
     	
@@ -60,6 +57,8 @@ If you have Docker installed (or any runtime understanding the Dockerfile format
     
 And you'll have Docker compile the binary and make it available under the image named `warmans/aggregate-exporter:latest`
 
+Alternatively the image is available though docker-hub: https://hub.docker.com/r/warmans/prometheus-aggregate-exporter
+
 ### Example Usage
 ```
 ./bin/prometheus-aggregate-exporter \
@@ -97,4 +96,8 @@ the metrics will rather look like:
 
     http_requests_total{method="post",code="200",instance="histo1"} 1027 1395066363000
          
-     
+#### Target URL containing a `=` character
+
+In case one of your target urls contains a `=` character (for instance consul agent's exporter is available at `/v1/agent/metrics?format=prometheus`), you **must** use the custom labelling notation:
+
+     bin/prometheus-aggregate-exporter -targets="consul=http://localhost:8500/v1/agent/metrics?format=prometheus"
