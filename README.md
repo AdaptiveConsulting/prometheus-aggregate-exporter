@@ -29,6 +29,12 @@ the aggregate view. This can be modified
   -targets.scrape.timeout (TARGETS_SCRAPE_TIMEOUT) int
     	If a target metrics pages does not responde with this many miliseconds then timeout (default 1000)
 
+  -targets.dynamic.registration (TARGETS_DYNAMIC_REGISTRATION) bool
+        Enabled dynamic targets registration/deregistration using /register and /unregister endpoints (default false)
+                
+  -targets.cache.path
+        Path to file used as cache of targets usable in case of application restart with dynamic targets registered (default empty)
+
   -verbose (VERBOSE)
     	Log more information
     	
@@ -58,6 +64,22 @@ If you have Docker installed (or any runtime understanding the Dockerfile format
 And you'll have Docker compile the binary and make it available under the image named `warmans/aggregate-exporter:latest`
 
 Alternatively the image is available though docker-hub: https://hub.docker.com/r/warmans/prometheus-aggregate-exporter
+
+### Manual Testing
+
+You can run the exporter against some static fixture files by running the following make targets
+in separate terminals.
+
+```shell
+$ make test.run-fixture-server
+$ make test.run
+```
+
+then to view the `/metrics` page:
+
+```shell
+$ make test.scrape
+```
 
 ### Example Usage
 ```
@@ -101,3 +123,18 @@ the metrics will rather look like:
 In case one of your target urls contains a `=` character (for instance consul agent's exporter is available at `/v1/agent/metrics?format=prometheus`), you **must** use the custom labelling notation:
 
      bin/prometheus-aggregate-exporter -targets="consul=http://localhost:8500/v1/agent/metrics?format=prometheus"
+
+#### Dynamic registration 
+
+If `targets.dynamic.registration` is set to `true` additional `HTTP GET` endpoints are available `/register` and `/unregister`.
+Those can be used for example for dynamic exporter discovery in multi replica `Kubernetes` environment when exact adress of exporter is not known at start.
+
+Both support query parameters:
+* name - name of registered exporter (same as name usable in `targets`)
+* address - address of exporter without schema (ex. `localhost:9090/metrics`)
+* schema - exporter schema (default `http`)
+
+Example usage:
+* register exporter: `localhost:8080/register?name=someExporter&address=localhost:3000/metrics`
+* unregister exporter: `localhost:8080/unregister?name=xxx&address=localhost:3000`
+

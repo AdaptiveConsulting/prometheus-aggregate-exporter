@@ -3,3 +3,5 @@
 /.tarballs
 /bin
 /VERSION
+/*.iml
+.cache
