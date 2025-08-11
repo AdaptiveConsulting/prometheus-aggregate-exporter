@@ -1,0 +1,144 @@
+name: test/build/publish
+
+env:
+  GO_VERSION: "^1.22.5"
+  GIT_TAG: ${{github.ref_name}}
+
+on:
+  push:
+    branches: [ master, develop ]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+.rc[0-9]+'
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{env.GO_VERSION}}
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: v1.62.0
+          working-directory: cmd
+          skip-cache: true
+          args: --timeout=5m
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{env.GO_VERSION}}
+
+      - name: Go tests
+        run: go test -v ./...
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{env.GO_VERSION}}
+
+      - name: Build Linux
+        working-directory: ${{env.working-directory}}
+        run: make build
+
+  release:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build
+      - test
+      - lint
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build Linux x86
+        working-directory: ${{env.working-directory}}
+        run: make build-arch
+        env:
+          GOOS: linux
+          GOARCH: amd64
+
+      - name: Build Darwin x86
+        working-directory: ${{env.working-directory}}
+        run: make build-arch
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+
+      - name: Create Release
+        uses: actions/create-release@v1
+        id: create_release
+        with:
+          draft: ${{ contains( env.GIT_TAG, '.rc' ) }} #todo: is there no regex match?
+          prerelease: false
+          release_name: ${{ env.GIT_TAG }}
+          tag_name: ${{ env.GIT_TAG }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Upload linux x86 artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./bin/prometheus-aggregate-exporter-linux-amd64
+          asset_name: prometheus-aggregate-exporter-linux-amd64
+          asset_content_type: application/octet-stream
+
+      - name: upload darwin x86 artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./bin/prometheus-aggregate-exporter-darwin-amd64
+          asset_name: prometheus-aggregate-exporter-darwin-amd64
+          asset_content_type: application/octet-stream
+
+  publish:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '.rc')
+    needs:
+      - build
+      - test
+      - lint
+    env:
+      working-directory: ./server
+    steps:
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{secrets.DOCKERHUB_USERNAME}}
+          password: ${{secrets.DOCKERHUB_TOKEN}}
+
+      - name: Build and push server
+        uses: docker/build-push-action@v4
+        with:
+          build-args: GIT_TAG=${{env.GIT_TAG}}
+          push: true
+          tags: warmans/prometheus-aggregate-exporter:latest,warmans/prometheus-aggregate-exporter:${{env.GIT_TAG}}

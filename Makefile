@@ -1,11 +1,11 @@
 ifndef MAKE_DEBUG
-    MAKEFLAGS += -s
+	MAKEFLAGS += -s
 endif
 
-GO    := go
-PROMU ?= $(GOPATH)/bin/promu
+# Setting CGO_ENABLED to 0 disables CGO (cf. https://pkg.go.dev/cmd/cgo)
+CGO_ENABLED := 0
 
-GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null || echo "unknown")
+GIT_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || echo "unknown")
 
 BIN_DIR ?= $(shell pwd)/bin
 
@@ -13,10 +13,31 @@ PROJECT_OWNER ?= warmans
 PROJECT_NAME ?= aggregate-exporter
 DOCKER_NAME ?= $(PROJECT_OWNER)/$(PROJECT_NAME)
 
+LOCAL_BIN := "$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))/.env/bin"
+
+.PHONY: install.linter
+install.linter:
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(LOCAL_BIN) v1.62.0
+
+.PHONY: lint.go
+lint:
+	$(LOCAL_BIN)/golangci-lint run
+
 .PHONY: build
 build:
-	echo ">> building binaries"
-	go build -o ${BIN_DIR}/prometheus-aggregate-exporter -ldflags "-X main.Version=${GIT_TAG}" ./cmd
+	echo ">> building linux binary"
+	CGO_ENABLED=$(CGO_ENABLED) go build -o ${BIN_DIR}/prometheus-aggregate-exporter -ldflags "-X main.Version=${GIT_TAG}" ./cmd
+
+.PHONY: build-arch
+build-arch:
+ifndef GOOS
+	echo "GOOS must be defined"; exit 1;
+endif
+ifndef GOARCH
+	echo "GOARCH must be defined"; exit 1;
+endif
+	echo ">> building $(GOOS) $(GOARCH) binary"
+	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=$(CGO_ENABLED) go build -o ${BIN_DIR}/prometheus-aggregate-exporter-$(GOOS)-$(GOARCH) -ldflags "-X main.Version=${GIT_TAG}" ./cmd
 
 
 # Manual Testing
@@ -34,8 +55,8 @@ test.run: build
 	-targets.dynamic.registration=true \
 	-targets.cache.path=".cache"
 
-.PHONY: test.scrape
-test.scrape:
+.PHONY: test.fetch
+test.fetch:
 	curl localhost:8080/metrics
 
 test.unregister:
@@ -49,7 +70,7 @@ test.register:
 
 .PHONY: docker-build
 docker-build:
-	docker build -t $(DOCKER_NAME):$(GIT_TAG) -t $(DOCKER_NAME):latest . && echo ">> built $(DOCKER_NAME):$(GIT_TAG) and $(DOCKER_NAME):latest"
+	docker build --build-arg GIT_TAG=$(GIT_TAG) -t $(DOCKER_NAME):$(GIT_TAG) -t $(DOCKER_NAME):latest . && echo ">> built $(DOCKER_NAME):$(GIT_TAG) and $(DOCKER_NAME):latest"
 
 .PHONY: buildah-f30
 buildah-f30:

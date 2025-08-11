@@ -1,15 +1,14 @@
 Aggregate Exporter
 ============================
 
-Aggregates many exporters to a single page to reduce number of
+Aggregates many exporters to a single endpoint to reduce number of
 exposed endpoints.
 
 __NOTE__
 
-This doesn't actually aggregate metrics (as in it doesn't sum them up etc.) 
-and is possibly quite badly named. As a result each target
-has it's metrics tagged with a label so that they are not duplicated in
-the aggregate view. This can be modified 
+This doesn't actually aggregate metrics (as in it doesn't sum them up etc.). 
+As a result each target has its metrics tagged with a label so that they are not duplicated in
+the aggregate view. 
 
 ### Options
 
@@ -40,20 +39,31 @@ the aggregate view. This can be modified
     	
   -version (VERSION)
     	Show version and exit
-
 ```
+
 ### How to build it
 
 #### Build using the go binary
 
 If you have go (1.14) installed on your machine, you can simply do:
 
-    cd cmd/
-    go build -o prometheus-aggregate-exporter
+```shell
+cd cmd/
+go build -o prometheus-aggregate-exporter
+```
+
+To build without CGO enabled, which removes the dependency on `libc`, do:
+
+```shell
+cd cmd/
+CGO_ENABLED=0 go build -o prometheus-aggregate-exporter
+```
 
 Or you can use the provided Makefile:
 
-    make build
+```shell
+make build
+```
 
 #### Build into a Docker image
 
@@ -71,18 +81,19 @@ You can run the exporter against some static fixture files by running the follow
 in separate terminals.
 
 ```shell
-$ make test.run-fixture-server
-$ make test.run
+make test.run-fixture-server
+make test.run
 ```
 
 then to view the `/metrics` page:
 
 ```shell
-$ make test.scrape
+make test.fetch
 ```
 
 ### Example Usage
-```
+
+```shell
 ./bin/prometheus-aggregate-exporter \
 	-targets="http://localhost:3000/histogram.txt,http://localhost:3000/histogram-2.txt" \
 	-server.bind=":8080"
@@ -91,7 +102,7 @@ $ make test.scrape
 or using environment variables instead of flags: 
 
 
-```
+```shell
 TARGETS="http://localhost:3000/histogram.txt,http://localhost:3000/histogram-2.txt" \
 SERVER_BIND=":8080" \
 ./bin/prometheus-aggregate-exporter 
@@ -99,10 +110,9 @@ SERVER_BIND=":8080" \
 
 or with docker
 
-```
+```shell
 docker run -it -p 8080:8080 -e TARGETS="http://localhost:3000/metrics" warmans/aggregate-exporter:latest
 ```
-
 
 #### Custom labelling
 
@@ -137,4 +147,19 @@ Both support query parameters:
 Example usage:
 * register exporter: `localhost:8080/register?name=someExporter&address=localhost:3000/metrics`
 * unregister exporter: `localhost:8080/unregister?name=xxx&address=localhost:3000`
+
+### Releasing via github actions
+
+A release is made whenever a tag following the normal semver pattern is pushed.
+
+e.g. `v1.0.0` or `v1.0.0rc1`
+
+### Releasing Manually
+
+Releasing is done as follows (although it can only be done by the author).
+
+1. git tag vX.X.X
+2. make build 
+3. make docker-build
+4. make docker-publish 
 

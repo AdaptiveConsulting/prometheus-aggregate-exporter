@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"flag"
+	"github.com/prometheus/client_golang/prometheus"
 	"log"
 	"os"
 	"strings"
@@ -38,6 +39,7 @@ var (
 	versionFlag            *bool
 	targetLabelsEnabled    *bool
 	targetLabelName        *string
+	targetUpMetric         *bool
 	serverBind             *string
 	tlsServerCert          *string
 	tlsServerKey           *string
@@ -60,16 +62,17 @@ func init() {
 	targets = stringFlag(flag.CommandLine, "targets", "", "comma separated list of targets e.g. http://localhost:8081/metrics,http://localhost:8082/metrics or url1=http://localhost:8081/metrics,url2=http://localhost:8082/metrics for custom label values")
 	targetLabelsEnabled = boolFlag(flag.CommandLine, "targets.label", true, "Add a label to metrics to show their origin target")
 	targetLabelName = stringFlag(flag.CommandLine, "targets.label.name", "ae_source", "Label name to use if a target name label is appended to metrics")
+	targetUpMetric = boolFlag(flag.CommandLine, "targets.up", false, "Enables an additional reachability metric for each downstream exporter.")
 
 	insecureSkipVerifyFlag = boolFlag(flag.CommandLine, "insecure-skip-verify", false, "Disable verification of TLS certificates")
 
 	dynamicRegistration = boolFlag(flag.CommandLine, "targets.dynamic.registration", false, "Enabled dynamic targets registration/deregistration using /register and /unregister endpoints")
 	cacheFilePath = stringFlag(flag.CommandLine, "targets.cache.path", "", "Path to file used as cache of targets usable in case of application restart with additional targets registered")
-
-	flag.Parse()
 }
 
 func main() {
+
+	flag.Parse()
 
 	if *versionFlag {
 		fmt.Print(Version)
@@ -382,40 +385,65 @@ func (f *Aggregator) Aggregate(targets []string, output io.Writer) {
 
 		allFamilies := make(map[string]*io_prometheus_client.MetricFamily)
 
+		upReg := prometheus.NewRegistry()
+		upMetric := prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "up",
+				Help: "Information about if the exporter reached the downstream exporters",
+			},
+			// Even if targetLabels are not enabled, we need to label the up metric accordingly.
+			[]string{*targetLabelName},
+		)
+		upReg.MustRegister(upMetric)
+
 		for {
 			if numTargets == numResults {
 				break
 			}
-			select {
-			case result := <-resultChan:
-				numResults++
 
-				if result.Error != nil {
-					log.Printf("Fetch error: %s", result.Error.Error())
-					continue
-				}
+			result := <-resultChan
+			numResults++
 
-				for mfName, mf := range result.MetricFamily {
-					if *targetLabelsEnabled {
-						for _, m := range mf.Metric {
-							m.Label = append(m.Label, &io_prometheus_client.LabelPair{Name: targetLabelName, Value: &result.Name})
-						}
-					}
-					if existingMf, ok := allFamilies[mfName]; ok {
-						for _, m := range mf.Metric {
-							existingMf.Metric = append(existingMf.Metric, m)
-						}
-					} else {
-						allFamilies[*mf.Name] = mf
+			if result.Error != nil {
+				upMetric.WithLabelValues(result.Name).Set(0)
+				log.Printf("Fetch error: %s", result.Error.Error())
+				continue
+			}
+
+			upMetric.WithLabelValues(result.Name).Set(1)
+
+			for mfName, mf := range result.MetricFamily {
+				if *targetLabelsEnabled {
+					for _, m := range mf.Metric {
+						m.Label = append(m.Label, &io_prometheus_client.LabelPair{Name: targetLabelName, Value: &result.Name})
 					}
 				}
-				if *verboseFlag {
-					log.Printf("OK: %s=%s was refreshed in %.3f seconds", result.Name, result.URL, result.SecondsTaken)
+				if existingMf, ok := allFamilies[mfName]; ok {
+					existingMf.Metric = append(existingMf.Metric, mf.Metric...)
+				} else {
+					allFamilies[*mf.Name] = mf
 				}
+			}
+			if *verboseFlag {
+				log.Printf("OK: %s=%s was refreshed in %.3f seconds", result.Name, result.URL, result.SecondsTaken)
+			}
+
+		}
+
+		fmtText := expfmt.NewFormat(expfmt.TypeTextPlain)
+		encoder := expfmt.NewEncoder(output, fmtText)
+
+		if *targetUpMetric {
+			upMetricFamilys, err := upReg.Gather()
+			if err != nil {
+				log.Printf("Failed to gather uptime metrics: %s", err.Error())
+			}
+
+			if err := encoder.Encode(upMetricFamilys[0]); err != nil {
+				log.Printf("Failed to encode up family: %s", err.Error())
 			}
 		}
 
-		encoder := expfmt.NewEncoder(output, expfmt.FmtText)
 		for _, f := range allFamilies {
 			if err := encoder.Encode(f); err != nil {
 				log.Printf("Failed to encode familty: %s", err.Error())
